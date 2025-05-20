@@ -1,19 +1,26 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"io"
 	"log" // Import the mime/multipart package
 	"net/http"
 	"os"
-	"strings"
 )
 
 var appsLog *log.Logger
 
 func main() {
-	traficsLogFile, err1 := os.OpenFile("trafics.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	appsLogFile, err2 := os.OpenFile("apps.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	log.Printf("Starting api-simulator..")
+
+	// Set up log
+	// Ensure log directory exists
+	if err := os.MkdirAll("log", 0755); err != nil {
+		log.Fatal("Error creating log directory:", err)
+	}
+
+	traficsLogFile, err1 := os.OpenFile("log/trafics.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	appsLogFile, err2 := os.OpenFile("log/apps.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 
 	appsLog = log.New(appsLogFile, "", log.LstdFlags|log.Lshortfile)
 
@@ -31,13 +38,23 @@ func main() {
 
 	log.SetOutput(multiWriter)
 
-	http.HandleFunc("/", handler) // Register handler for all routes
+	// Set up apps
+	mux := http.DefaultServeMux
+
+	mux.HandleFunc("/", handler) // Register handler for all routes
 
 	port := "8080"
-	log.Printf("Starting api-simulator on port %s", port)
-	appsLog.Printf("Starting api-simulator on port %s", port)
+	log.Printf("1 api-simulator started on port %s", port)
+	appsLog.Printf("2 api-simulator started on port %s", port)
 
-	err3 := http.ListenAndServe("localhost:"+port, nil)
+	var handler http.Handler = mux
+	handler = MiddlewareLog(handler)
+
+	server := new(http.Server)
+	server.Addr = "localhost:" + port
+	server.Handler = handler
+
+	err3 := server.ListenAndServe()
 	if err3 != nil {
 		appsLog.Fatalf("Could not start server: %s\n", err3)
 	}
@@ -45,80 +62,28 @@ func main() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("==================================================")
-	log.Printf("[%s] %s", r.Method, r.URL.Path)
-	log.Printf("==================================================")
+	url := r.URL.Path
+	method := r.Method
 
-	contentType := r.Header.Get("Content-Type")
+	log.Println("Request receiveds:", method, url)
 
-	// Correctly use strings.HasPrefix
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		// Parse the multipart form data
-		err := r.ParseMultipartForm(32 << 20) // 32MB max memory
+	var result []byte
+	var err error
+
+	if method == "GET" && url == "/status" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		var unauthMsg = map[string]string{"message": "oks"}
+		result, err = json.Marshal(unauthMsg)
+
 		if err != nil {
-			log.Printf("Error parsing multipart form: %v", err)
-			http.Error(w, "Error parsing multipart form", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Iterate over the form parts (files)
-		if r.MultipartForm != nil && r.MultipartForm.File != nil {
-			for key := range r.MultipartForm.File {
-				files := r.MultipartForm.File[key]
-				for _, fileHeader := range files {
-					log.Printf("Part Name: %s, FileName: %s, Content-Type: %s",
-						key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"))
-					// You can also access the file content itself if needed:
-					// file, err := fileHeader.Open()
-					// if err != nil { ... handle error ... }
-					// defer file.Close()
-					// ... read file content ...
-				}
-			}
-		}
-
-		if r.MultipartForm.Value != nil {
-			for key, values := range r.MultipartForm.Value {
-				for _, value := range values {
-					log.Printf("Form Field: %s, Value: %s", key, value)
-				}
-			}
-		}
-
-	} else {
-		// Read and log body for non-multipart requests
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("Error reading body: %v", err)
-			http.Error(w, "can't read body", http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close() // Close the body
-		printLog(r.Header, body)
+		w.Write(result)
+		return
 	}
 
-	// Send response
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, "success")
-}
-
-func printLog(header http.Header, body []byte) {
-	// Log headers
-	log.Println("Headers")
-	log.Printf("--------------------------------------------------")
-
-	for name, values := range header {
-		for _, val := range values {
-			log.Printf("%v: %v", name, val)
-		}
-	}
-
-	log.Printf("--------------------------------------------------")
-	log.Printf("")
-
-	log.Printf("Body")
-	log.Printf("--------------------------------------------------")
-
-	log.Printf("%v", string(body))
-	log.Printf("--------------------------------------------------")
 }
