@@ -1,0 +1,27 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Air",
+            "type": "go",
+            "request": "launch",
+            "preLaunchTask": "Run Air",
+            "program": "${workspaceFolder}"
+            // "trace": "verbose",
+            // "showLog": true
+        },
+        {
+            "name": "Debug in Air",
+            "type": "go",
+            "request": "attach",
+            "mode": "remote",
+            "port": 2345,
+            "host": "127.0.0.1",
+            // "trace": "verbose",
+            "showLog": true
+        }
+    ]
+}
