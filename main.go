@@ -3,41 +3,59 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"log" // Import the mime/multipart package
+	"log"
 	"net/http"
 	"os"
 	"slices"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var appsLog *log.Logger
+var (
+	appsLog *log.Logger
+)
 
 func main() {
-	log.Printf("Starting api-simulator..")
-
 	// Set up log
 	// Ensure log directory exists
 	if err := os.MkdirAll("log", 0755); err != nil {
 		log.Fatal("Error creating log directory:", err)
 	}
 
-	traficsLogFile, err1 := os.OpenFile("log/trafics.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	appsLogFile, err2 := os.OpenFile("log/apps.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// appsLogFile, err2 := os.OpenFile("log/apps.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// traficsLogFile, err1 := os.OpenFile("log/trafics.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 
-	appsLog = log.New(appsLogFile, "", log.LstdFlags|log.Lshortfile)
+	appsLogFile := &lumberjack.Logger{
+		Filename:   "log/apps2.log",
+		MaxSize:    100, // megabytes
+		MaxBackups: 3,
+		MaxAge:     1,     //days
+		Compress:   false, // disabled by default
+		LocalTime:  true,  // use local time for timestamps
+	}
 
-	if err1 != nil {
-		appsLog.Fatal("Error opening log file:", err1)
+	traficsLogFile := &lumberjack.Logger{
+		Filename:   "log/trafics2.log",
+		MaxSize:    100, // megabytes
+		MaxBackups: 3,
+		MaxAge:     1,     //days
+		Compress:   false, // disabled by default
+		LocalTime:  true,  // use local time for timestamps
 	}
-	if err2 != nil {
-		appsLog.Fatal("Error opening log file:", err2)
-	}
+
+	// application logging (appsLog)
+	appsLog = log.New(appsLogFile, "", log.LstdFlags|log.Lshortfile|log.Lmicroseconds)
+
+	// trafic logging (log)
+	multiWriter := io.MultiWriter(os.Stdout, traficsLogFile)
+
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetOutput(multiWriter)
 
 	defer traficsLogFile.Close()
 	defer appsLogFile.Close()
 
-	multiWriter := io.MultiWriter(os.Stdout, traficsLogFile)
-
-	log.SetOutput(multiWriter)
+	log.Println("Starting api-simulator..")
 
 	// Set up apps
 	mux := http.DefaultServeMux
@@ -45,8 +63,6 @@ func main() {
 	mux.HandleFunc("/", handler) // Register handler for all routes
 
 	port := "8080"
-	log.Printf("1 api-simulator started on port %s", port)
-	appsLog.Printf("2 api-simulator started on port %s", port)
 
 	var handler http.Handler = mux
 	handler = MiddlewareLog(handler)
@@ -55,10 +71,13 @@ func main() {
 	server.Addr = "localhost:" + port
 	server.Handler = handler
 
-	err3 := server.ListenAndServe()
+	log.Printf("api-simulator started on port %s", port)
+	appsLog.Printf("api-simulator started on port %s", port)
 
-	if err3 != nil {
-		appsLog.Fatalf("Could not start server: %s\n", err3)
+	err := server.ListenAndServe()
+
+	if err != nil {
+		appsLog.Fatalf("Could not start api-simulator: %s\n", err)
 	}
 
 }
@@ -74,11 +93,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	var reqs []request
 
 	var r1 request
-	r1.url = "/status"
+	r1.url = "/v1/rekeningsb"
 	r1.method = "GET"
 
 	var r2 response
-	r2.statusCode = 202
+	r2.statusCode = 200
 
 	var rheaders = make(map[string]string)
 	rheaders["Content-Type"] = "application/json"
@@ -90,6 +109,20 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	r1.response = r2
 
 	reqs = append(reqs, r1)
+
+	var r11 request
+	r11.url = "/delete"
+	r11.method = "DELETE"
+
+	var r12 response
+	r12.statusCode = 200
+
+	r12.headers = rheaders
+	r12.body = `{"status": "ok"}`
+
+	r11.response = r12
+
+	reqs = append(reqs, r11)
 
 	index := slices.IndexFunc(reqs, func(r request) bool {
 		return r.method == method && r.url == url
