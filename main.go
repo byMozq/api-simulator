@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -12,7 +13,8 @@ import (
 )
 
 var (
-	appsLog *log.Logger
+	appsLog     *log.Logger
+	apiDataList []APIData
 )
 
 func main() {
@@ -57,6 +59,16 @@ func main() {
 
 	log.Println("Starting api-simulator..")
 
+	var err error
+
+	// Read and print API data from JSON file
+	apiDataList, err = readAPIDataJson()
+
+	if err != nil {
+		log.Printf("Error reading API data: %v", err)
+		appsLog.Printf("Error reading API data: %v", err)
+	}
+
 	// Set up apps
 	mux := http.DefaultServeMux
 
@@ -74,7 +86,7 @@ func main() {
 	log.Printf("api-simulator started on port %s", port)
 	appsLog.Printf("api-simulator started on port %s", port)
 
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 
 	if err != nil {
 		appsLog.Fatalf("Could not start api-simulator: %s\n", err)
@@ -86,62 +98,26 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	url := r.URL.Path
 	method := r.Method
 
-	log.Println(">>> Incoming request:", method, url)
-
-	var result []byte
-	var err error
-	var reqs []request
-
-	var r1 request
-	r1.url = "/v1/rekeningsb"
-	r1.method = "GET"
-
-	var r2 response
-	r2.statusCode = 200
-
-	var rheaders = make(map[string]string)
-	rheaders["Content-Type"] = "application/json"
-	rheaders["X-Header"] = "X-Value"
-
-	r2.headers = rheaders
-	r2.body = `{"status": "ok"}`
-
-	r1.response = r2
-
-	reqs = append(reqs, r1)
-
-	var r11 request
-	r11.url = "/delete"
-	r11.method = "DELETE"
-
-	var r12 response
-	r12.statusCode = 200
-
-	r12.headers = rheaders
-	r12.body = `{"status": "ok"}`
-
-	r11.response = r12
-
-	reqs = append(reqs, r11)
-
-	index := slices.IndexFunc(reqs, func(r request) bool {
-		return r.method == method && r.url == url
+	index := slices.IndexFunc(apiDataList, func(ad APIData) bool {
+		return ad.Method == method && ad.URL == url
 	})
 
-	var targetReq request
+	var targetApi APIData
 
 	if index != -1 {
-		targetReq = reqs[index]
+		log.Printf("API Found! index: %d", index)
 
-		response := targetReq.response
+		targetApi = apiDataList[index]
 
-		for key, val := range response.headers {
+		response := targetApi.Response
+
+		for key, val := range response.Headers {
 			w.Header().Set(key, val)
 		}
-		w.WriteHeader(response.statusCode)
+		w.WriteHeader(response.StatusCode)
 
-		if response.body != "" {
-			w.Write([]byte(response.body))
+		if response.Body.Body != "" {
+			w.Write([]byte(response.Body.Body))
 		}
 
 		return
@@ -151,7 +127,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 
 		var errMsg = map[string]string{"message": "request not found"}
-		result, err = json.Marshal(errMsg)
+		var result, err = json.Marshal(errMsg)
 
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -162,4 +138,30 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+}
+
+// readAPIDataJson reads data from tmp/api-data.json
+func readAPIDataJson() ([]APIData, error) {
+	// Open the JSON file
+	file, err := os.Open("tmp/api-data.json")
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	// Read file content
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("error reading file: %v", err)
+	}
+
+	var apiDataList []APIData
+
+	// Parse JSON data
+	err = json.Unmarshal(data, &apiDataList)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing JSON: %v", err)
+	}
+
+	return apiDataList, nil
 }

@@ -12,6 +12,9 @@ import (
 
 func MiddlewareLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		log.Println(">>> Incoming request: ", r.Method, r.URL.Path)
+
 		var buf bytes.Buffer
 
 		buf.WriteString("\n")
