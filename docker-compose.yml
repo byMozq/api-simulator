@@ -1,0 +1,13 @@
+services:
+    api-simulator:
+        image: api-simulator:0.1
+        container_name: api-simulator_0.1
+        ports:
+            - "8800:8800"
+        volumes:
+            - api-simulator-data:/data
+        restart: unless-stopped
+
+volumes:
+    api-simulator-data:
+        driver: local
