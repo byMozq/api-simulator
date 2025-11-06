@@ -1,0 +1,53 @@
+[
+    {
+        "method": "POST",
+        "url": "/sayHello",
+        "request" : {
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer qwertyuiop"
+            },
+            "body": "{\"id\":1}"
+        },
+        "response": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": "{\"message\":\"Hello user with id: 1!\"}"
+        }
+    },
+    {
+        "method": "GET",
+        "url": "/hello?name=John",
+        "request" : {
+            "headers": {
+                "Authorization": "Bearer qwertyuiop"
+            },
+            "body": ""
+        },
+        "response": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": "{\"message\":\"Hello John!\"}"
+        }
+    },
+    {
+        "method": "GET",
+        "url": "/hello3",
+        "request" : {
+            "headers": {
+            },
+            "body": ""
+        },
+        "response": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": "{\"message\":\"Hello 3!\"}"
+        }
+    }
+]

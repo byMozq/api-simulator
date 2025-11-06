@@ -1,24 +1,65 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"slices"
+	"reflect"
 
+	"github.com/google/uuid"
+
+	"github.com/hashicorp/go-memdb"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var (
-	appsLog     *log.Logger
-	apiDataList []APIData
+	appsLog *log.Logger
 )
 
 func main() {
-	// Set up log
+	initializeLog()
+
+	var err error
+
+	db, err := initializeDB()
+	if err != nil {
+		log.Fatalf("Could not initialize database: %v", err)
+	}
+
+	log.Println("Starting api-simulator..")
+
+	insertJsonDataToDb(db)
+
+	// Set up apps
+	mux := http.DefaultServeMux
+
+	mux.HandleFunc("/", apiHandler(db)) // Register handler for all routes
+
+	var handler http.Handler = mux
+	handler = MiddlewareLog(handler)
+
+	server := new(http.Server)
+
+	port := "8800"
+	server.Addr = ":" + port
+	server.Handler = handler
+
+	log.Printf("api-simulator started on port %s", port)
+	appsLog.Printf("api-simulator started on port %s", port)
+
+	err = server.ListenAndServe()
+
+	if err != nil {
+		appsLog.Fatalf("Could not start api-simulator: %s\n", err)
+	}
+
+}
+
+func initializeLog() {
 	// Ensure log directory exists
 	if err := os.MkdirAll("log", 0755); err != nil {
 		log.Fatal("Error creating log directory:", err)
@@ -28,7 +69,7 @@ func main() {
 	// traficsLogFile, err1 := os.OpenFile("log/trafics.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 
 	appsLogFile := &lumberjack.Logger{
-		Filename:   "log/apps2.log",
+		Filename:   "log/apps.log",
 		MaxSize:    100, // megabytes
 		MaxBackups: 3,
 		MaxAge:     1,     //days
@@ -37,7 +78,7 @@ func main() {
 	}
 
 	traficsLogFile := &lumberjack.Logger{
-		Filename:   "log/trafics2.log",
+		Filename:   "log/trafics.log",
 		MaxSize:    100, // megabytes
 		MaxBackups: 3,
 		MaxAge:     1,     //days
@@ -56,78 +97,78 @@ func main() {
 
 	defer traficsLogFile.Close()
 	defer appsLogFile.Close()
-
-	log.Println("Starting api-simulator..")
-
-	var err error
-
-	// Read and print API data from JSON file
-	apiDataList, err = readAPIDataJson()
-
-	if err != nil {
-		log.Printf("Error reading API data: %v", err)
-		appsLog.Printf("Error reading API data: %v", err)
-	}
-
-	// Set up apps
-	mux := http.DefaultServeMux
-
-	mux.HandleFunc("/", handler) // Register handler for all routes
-
-	port := "8080"
-
-	var handler http.Handler = mux
-	handler = MiddlewareLog(handler)
-
-	server := new(http.Server)
-	server.Addr = "localhost:" + port
-	server.Handler = handler
-
-	log.Printf("api-simulator started on port %s", port)
-	appsLog.Printf("api-simulator started on port %s", port)
-
-	err = server.ListenAndServe()
-
-	if err != nil {
-		appsLog.Fatalf("Could not start api-simulator: %s\n", err)
-	}
-
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Path
-	method := r.Method
+func initializeDB() (*memdb.MemDB, error) {
+	// Get schema from APIData.go
+	schema := GetAPIDataSchema()
 
-	index := slices.IndexFunc(apiDataList, func(ad APIData) bool {
-		return ad.Method == method && ad.URL == url
-	})
+	// Create a new database
+	db, err := memdb.NewMemDB(schema)
 
-	var targetApi APIData
+	if err != nil {
+		return nil, fmt.Errorf("error creating memdb: %v", err)
+	}
 
-	if index != -1 {
-		log.Printf("API Found! index: %d", index)
+	return db, nil
+}
 
-		targetApi = apiDataList[index]
+func apiHandler(db *memdb.MemDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		method := r.Method
+		url := r.RequestURI
+		contentType := r.Header.Get("Content-Type")
 
-		response := targetApi.Response
-
-		for key, val := range response.Headers {
-			w.Header().Set(key, val)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Panicf("Error reading body: %v", err)
+			http.Error(w, "can't read body", http.StatusBadRequest)
+			return
 		}
-		w.WriteHeader(response.StatusCode)
+		defer r.Body.Close() // Close the body
+		r.Body = io.NopCloser(bytes.NewBuffer(body))
 
-		if response.Body.Body != "" {
-			w.Write([]byte(response.Body.Body))
+		txn := db.Txn(false)
+		defer txn.Abort()
+
+		it, err := txn.Get("apidata", "method_url", method, url)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
-		return
+		if it != nil {
+			var targetApi APIData
 
-	} else {
+			for obj := it.Next(); obj != nil; obj = it.Next() {
+				p := obj.(APIData)
+				if checkBody(contentType, string(body), p.Request.Body) {
+					targetApi = p
+				}
+			}
+
+			if !reflect.DeepEqual(targetApi, APIData{}) {
+				response := targetApi.Response
+
+				for key, val := range response.Headers {
+					w.Header().Set(key, val)
+				}
+				w.WriteHeader(response.StatusCode)
+
+				if response.Body != "" {
+					w.Write([]byte(response.Body))
+				}
+
+				return
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 
-		var errMsg = map[string]string{"message": "request not found"}
-		var result, err = json.Marshal(errMsg)
+		errMsg := map[string]string{"message": "request not found"}
+
+		result, err := json.Marshal(errMsg)
 
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -135,15 +176,58 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.Write(result)
+	}
+}
+
+func checkBody(bodyType string, rBody string, dBody string) bool {
+	if bodyType == "json" {
+		var obj1, obj2 map[string]interface{}
+
+		err1 := json.Unmarshal([]byte(rBody), &obj1)
+		err2 := json.Unmarshal([]byte(dBody), &obj2)
+
+		if err1 != nil || err2 != nil {
+			fmt.Println("Error unmarshaling JSON")
+			return false
+		}
+
+		if reflect.DeepEqual(obj1, obj2) {
+			fmt.Println("JSON strings are logically equal")
+		} else {
+			fmt.Println("JSON strings are different")
+		}
+	}
+
+	return rBody == dBody
+}
+
+func insertJsonDataToDb(db *memdb.MemDB) {
+	apiDataList, err := readAPIDataJson()
+	if err != nil {
+		log.Printf("Error reading API data JSON: %v", err)
 		return
 	}
 
+	txn := db.Txn(true)
+	// defer txn.Abort()
+
+	for _, apiData := range apiDataList {
+		apiData.ID = uuid.NewString() // Generate a new UUID for each APIData entry
+
+		log.Printf("Inserting API data into DB: %v", apiData)
+
+		if err := txn.Insert("apidata", apiData); err != nil {
+			log.Printf("Error inserting API data into DB: %v", err)
+		}
+	}
+
+	txn.Commit()
 }
 
-// readAPIDataJson reads data from tmp/api-data.json
+// readAPIDataJson reads data from data/api-data.json
 func readAPIDataJson() ([]APIData, error) {
 	// Open the JSON file
-	file, err := os.Open("tmp/api-data.json")
+	file, err := os.Open("data/api-data.json")
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %v", err)
 	}

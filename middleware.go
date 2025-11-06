@@ -13,13 +13,13 @@ import (
 func MiddlewareLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		log.Println(">>> Incoming request: ", r.Method, r.URL.Path)
+		log.Println(">>> Incoming request: ", r.Method, r.RequestURI)
 
 		var buf bytes.Buffer
 
 		buf.WriteString("\n")
 		buf.WriteString("==================================================\n")
-		buf.WriteString(fmt.Sprintf("[%s] %s", r.Method, r.URL.Path) + "\n")
+		buf.WriteString(fmt.Sprintf("[%s] %s", r.Method, r.RequestURI) + "\n")
 		buf.WriteString("==================================================\n")
 
 		contentType := r.Header.Get("Content-Type")
