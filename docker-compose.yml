@@ -1,5 +1,6 @@
 services:
     api-simulator:
+        build: .
         image: api-simulator:0.1
         container_name: api-simulator_0.1
         ports:
